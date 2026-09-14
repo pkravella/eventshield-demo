@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EventShield — shadow testing for Kafka consumers</title>
+<meta name="description" content="EventShield replays real Kafka traffic through the current build and a candidate build side by side, then diffs what each one did. Built in Go, run on AWS, measured rather than estimated.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f2f4f3;
+    --panel: #ffffff;
+    --ink: #151a1e;
+    --ink-2: #3b454c;
+    --mute: #66737b;
+    --line: #d6dcda;
+    --line-2: #e6eae8;
+    --base: #0e6b6b;       /* baseline: teal */
+    --base-soft: #d7ecea;
+    --cand: #a9236a;       /* candidate: plum */
+    --cand-soft: #f3d9e7;
+    --mark: #e3a008;       /* a difference */
+    --mark-soft: #fbeccb;
+    --ok: #1d7a4a;
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --w: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--body); font-size: 17px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  ::selection { background: var(--cand-soft); }
+  .wrap { max-width: var(--w); margin: 0 auto; padding: 0 28px; }
+  h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; margin: 0; font-variation-settings: "opsz" 96; }
+  h2 { font-size: clamp(30px, 4.2vw, 46px); font-weight: 800; line-height: 1.02; max-width: 16ch; }
+  h3 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0 0 1em; max-width: 64ch; }
+  .lede { font-size: 19px; color: var(--ink-2); }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--line-2); padding: 0.1em 0.35em; border-radius: 4px; }
+  .b { color: var(--base); } .c { color: var(--cand); }
+  .tag { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--mute); letter-spacing: 0.02em; }
+  .tag::before { content: ""; width: 26px; height: 2px; background: currentColor; opacity: .5; }
+
+  /* ---- nav ---- */
+  nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line-2); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  .brand { font-family: var(--display); font-weight: 800; font-size: 19px; letter-spacing: -0.02em; text-decoration: none; display: flex; align-items: center; gap: 10px; }
+  .brand i { display: inline-block; width: 18px; height: 18px; border-radius: 3px; background: linear-gradient(90deg, var(--base) 50%, var(--cand) 50%); }
+  nav ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 22px; }
+  nav li a { text-decoration: none; font-size: 14.5px; color: var(--ink-2); }
+  nav li a:hover { color: var(--ink); }
+  nav .gh { font-family: var(--mono); font-size: 13px; border: 1px solid var(--line); padding: 5px 10px; border-radius: 6px; text-decoration: none; }
+  @media (max-width: 720px) { nav ul { display: none; } }
+
+  /* ---- hero ---- */
+  .hero { padding: 96px 0 48px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 72px; align-items: end; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } .hero { padding-top: 64px; } .split { margin-top: 56px; } }
+  .hero h1 { font-size: clamp(56px, 9vw, 112px); font-weight: 800; line-height: 0.92; letter-spacing: -0.045em; }
+  .hero h1 .thin { font-weight: 500; display: block; font-size: 0.42em; letter-spacing: -0.02em; line-height: 1.15; margin-top: 18px; max-width: 24ch; color: var(--ink-2); }
+  .hero .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 34px 0 0; font-family: var(--mono); font-size: 13px; color: var(--mute); }
+  .hero .meta span::before { content: "·"; margin-right: 12px; }
+  .hero .meta span:first-child::before { content: none; }
+  .hero-side p { margin-bottom: 26px; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .btn { font-family: var(--body); font-weight: 600; font-size: 15px; padding: 11px 16px; border-radius: 8px; border: 1px solid var(--ink); background: var(--ink); color: #fff; text-decoration: none; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--ink); }
+  .btn:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid var(--mark); outline-offset: 2px; }
+
+  /* ---- the split (signature) ---- */
+  .split { margin: 88px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .split-head { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line-2); }
+  .split-head .title { font-family: var(--mono); font-size: 13px; color: var(--mute); }
+  .split-head .title b { color: var(--ink); font-weight: 600; }
+  .controls { display: flex; align-items: center; gap: 14px; font-size: 14px; }
+  .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch .knob { width: 40px; height: 22px; border-radius: 11px; background: var(--line); position: relative; transition: background .2s; }
+  .switch .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .switch input:checked + .knob { background: var(--cand); }
+  .switch input:checked + .knob::after { transform: translateX(18px); }
+  .switch input:focus-visible + .knob { outline: 3px solid var(--mark); outline-offset: 2px; }
+  .iconbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 5px 10px; font-family: var(--mono); font-size: 12.5px; cursor: pointer; }
+  .lanes { display: grid; grid-template-columns: 1fr 1fr; position: relative; }
+  .lane { padding: 16px 18px 12px; min-height: 250px; position: relative; }
+  .lane + .lane { border-left: 1px solid var(--line-2); }
+  .lane h4 { margin: 0 0 10px; font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: lowercase; display: flex; align-items: center; gap: 8px; }
+  .lane h4 i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .lane.base h4 { color: var(--base); } .lane.base h4 i { background: var(--base); }
+  .lane.cand h4 { color: var(--cand); } .lane.cand h4 i { background: var(--cand); }
+  .lane h4 small { font-weight: 400; color: var(--mute); text-transform: none; letter-spacing: 0; margin-left: auto; }
+  .feed { display: flex; flex-direction: column; gap: 6px; font-family: var(--mono); font-size: 13px; }
+  .row { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 10px; border-radius: 6px; background: var(--paper); color: var(--ink-2); animation: slide .28s ease-out; }
+  .row .id { color: var(--mute); }
+  .row .out { color: var(--ink); font-weight: 500; }
+  .row.de .id::after { content: " DE"; color: var(--mute); }
+  .row.diff { background: var(--mark-soft); box-shadow: inset 3px 0 0 var(--mark); }
+  .row.diff .out { color: var(--cand); font-weight: 600; }
+  @keyframes slide { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .split-foot { display: grid; grid-template-columns: repeat(3, auto) 1fr; gap: 28px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--line-2); font-family: var(--mono); font-size: 13px; color: var(--mute); }
+  .split-foot b { color: var(--ink); font-weight: 600; font-size: 15px; display: block; }
+  .verdict { justify-self: end; font-weight: 600; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); }
+  .verdict.pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: #e6f3ec; }
+  .verdict.fail { color: var(--cand); border-color: color-mix(in srgb, var(--cand) 40%, transparent); background: var(--cand-soft); }
+  .split-note { font-size: 13.5px; color: var(--mute); margin: 12px 4px 0; }
+  @media (max-width: 720px) { .lanes { grid-template-columns: 1fr; } .lane + .lane { border-left: 0; border-top: 1px solid var(--line-2); } .split-foot { grid-template-columns: 1fr 1fr; } .verdict { justify-self: start; } }
+
+  /* ---- sections ---- */
+  section { padding: 84px 0; border-top: 1px solid var(--line-2); }
+  .sec-head { display: grid; grid-template-columns: 200px 1fr; gap: 28px; margin-bottom: 34px; align-items: start; }
+  .sec-head .tag { padding-top: 12px; }
+  @media (max-width: 800px) { .sec-head { grid-template-columns: 1fr; gap: 10px; } }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  @media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+
+  /* pipeline */
+  .pipe { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 8px 0 22px; }
+  .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 12px; min-height: 128px; position: relative; }
+  .stage .n { font-family: var(--display); font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
+  .stage .d { font-size: 13.5px; color: var(--ink-2); margin-top: 6px; line-height: 1.4; }
+  .stage.dual { display: flex; flex-direction: column; padding-bottom: 0; }
+  .stage.dual .d { margin-bottom: 14px; }
+  .stage .sides { margin: auto -14px 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; }
+  .stage .sides span { display: block; padding: 7px 14px; }
+  .stage .sides .b { background: var(--base-soft); }
+  .stage .sides .c { background: var(--cand-soft); border-radius: 0 0 9px 9px; }
+  @media (max-width: 900px) { .pipe { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .pipe { grid-template-columns: repeat(2, 1fr); } }
+  .rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; }
+  .rules li { padding: 12px 0; border-top: 1px solid var(--line-2); font-size: 15.5px; }
+  .rules li b { display: block; font-family: var(--mono); font-size: 12.5px; color: var(--mute); font-weight: 500; margin-bottom: 4px; }
+  @media (max-width: 720px) { .rules { grid-template-columns: 1fr; } }
+
+  /* isolation */
+  .probe { background: var(--ink); color: #dfe5e3; border-radius: 12px; padding: 20px 22px; font-family: var(--mono); font-size: 13.5px; line-height: 1.75; }
+  .probe .k { color: #8fa1a8; }
+  .probe .no { color: #ff9ac2; } .probe .yes { color: #7fd8c6; }
+  .probe .cmt { color: #6f7f86; }
+
+  /* numbers */
+  .ledger { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .ledger th, .ledger td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+  .ledger th { font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--mute); background: #fafbfa; }
+  .ledger tr:last-child td { border-bottom: 0; }
+  .ledger .num { font-family: var(--display); font-weight: 700; font-size: 24px; letter-spacing: -0.02em; white-space: nowrap; }
+  .ledger .how { color: var(--mute); font-size: 13.5px; }
+  .ledger .num.c { color: var(--cand); }
+  .ledger-wrap { overflow-x: auto; }
+  .fine { font-size: 14px; color: var(--mute); }
+
+  /* chart */
+  .chart { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 16px 10px; margin-top: 26px; }
+  .chart-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .chart-top .tag::before { display: none; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 7px 12px; font-family: var(--mono); font-size: 12.5px; cursor: pointer; color: var(--ink-2); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .chart .lbl { font-family: var(--mono); font-size: 11px; fill: var(--mute); }
+  .chart .ax { stroke: var(--line); stroke-width: 1; }
+  .chart .pre { fill: none; stroke: var(--mute); stroke-width: 2; }
+  .chart .post { fill: none; stroke: var(--cand); stroke-width: 2.5; }
+  .chart .stall { stroke: var(--mark); stroke-width: 6; stroke-linecap: round; opacity: .8; }
+  .legend { display: flex; gap: 18px; font-family: var(--mono); font-size: 12px; color: var(--mute); margin-top: 4px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  .readout { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); min-height: 1.6em; }
+
+  /* profile story */
+  .stack { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 26px; }
+  @media (max-width: 800px) { .stack { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card h3 { margin-bottom: 8px; }
+  .card .when { font-family: var(--mono); font-size: 12.5px; color: var(--mute); margin-bottom: 10px; }
+  .bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin: 12px 0 6px; font-family: var(--mono); font-size: 11.5px; color: #fff; }
+  .bar span { display: flex; align-items: center; padding-left: 8px; white-space: nowrap; overflow: hidden; }
+  .bar .wait { background: var(--mute); } .bar .run { background: var(--base); } .bar .io { background: var(--cand); }
+  .dump { font-family: var(--mono); font-size: 12px; background: var(--paper); border-radius: 8px; padding: 12px 14px; color: var(--ink-2); overflow-x: auto; white-space: pre; line-height: 1.6; margin-top: 12px; }
+  .dump b { color: var(--cand); font-weight: 600; }
+
+  /* built / limits */
+  .stack-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+  .stack-list div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 14.5px; }
+  .stack-list div b { display: block; font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--mute); margin-bottom: 4px; }
+  @media (max-width: 900px) { .stack-list { grid-template-columns: repeat(2, 1fr); } }
+  .limits { list-style: none; padding: 0; margin: 0; }
+  .limits li { padding: 12px 0 12px 22px; border-top: 1px solid var(--line-2); position: relative; max-width: 70ch; }
+  .limits li::before { content: ""; position: absolute; left: 0; top: 21px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--mark); }
+
+  footer { padding: 40px 0 60px; border-top: 1px solid var(--line-2); font-size: 14px; color: var(--mute); }
+  footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  footer a { color: var(--ink-2); }
+
+  @media (max-width: 720px) {
+    .ledger:not(.mini) thead { display: none; }
+    .ledger:not(.mini), .ledger:not(.mini) tbody { display: block; }
+    .ledger:not(.mini) tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line-2); }
+    .ledger:not(.mini) tr:last-child { border-bottom: 0; }
+    .ledger:not(.mini) td { display: block; padding: 0; border: 0; }
+    .ledger:not(.mini) td:nth-child(1) { grid-column: 1 / -1; font-family: var(--mono); font-size: 12.5px; color: var(--mute); }
+    .ledger:not(.mini) td:nth-child(3) { font-family: var(--mono); font-size: 12.5px; color: var(--mute); align-self: end; white-space: nowrap; }
+    .ledger:not(.mini) td:nth-child(3)::before { content: "target "; }
+    .ledger:not(.mini) td:nth-child(4) { grid-column: 1 / -1; margin-top: 4px; }
+    .chart .lbl { font-size: 24px; }
+    .chart .pre { stroke-width: 3; } .chart .post { stroke-width: 4; } .chart .stall { stroke-width: 10; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .row { animation: none; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><i></i>EventShield</a>
+    <ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#isolation">Isolation</a></li>
+      <li><a href="#numbers">Numbers</a></li>
+      <li><a href="#built">What I built</a></li>
+    </ul>
+    
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <h1>EventShield
+          <span class="thin">Replay yesterday's Kafka traffic through tomorrow's build, and diff what it did.</span>
+        </h1>
+        <div class="meta"><span>Go</span><span>Kafka / MSK</span><span>Kubernetes / EKS</span><span>ClickHouse</span><span>Terraform</span></div>
+      </div>
+      <div class="hero-side">
+        <p class="lede">A Kafka consumer can pass every unit test and still behave differently in production, because the inputs that break it only exist in production. EventShield takes a sample of real events, runs them through the <span class="b">current build</span> and the <span class="c">candidate build</span> at the same time in an isolated sandbox, records every side effect each one produced, and compares them event by event. If the candidate does something the current build didn't, the deploy gate says no.</p>
+        <div class="btns">
+          <a class="btn" href="#numbers">See what it measured ↓</a>
+          <a class="btn ghost" href="#how">How it works</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="split" id="split" aria-label="Live demonstration of a shadow test">
+      <div class="split-head">
+        <div class="title"><b>order.created</b> → invoice.created &nbsp;·&nbsp; sampled events replayed through both builds</div>
+        <div class="controls">
+          <label class="switch"><input type="checkbox" id="plant" checked><span class="knob"></span><span>plant the DE‑tax regression</span></label>
+          <button class="iconbtn" id="pause" aria-pressed="false">pause</button>
+        </div>
+      </div>
+      <div class="lanes">
+        <div class="lane base"><h4><i></i>baseline <small>what runs today</small></h4><div class="feed" id="feed-b"></div></div>
+        <div class="lane cand"><h4><i></i>candidate <small>the build under test</small></h4><div class="feed" id="feed-c"></div></div>
+      </div>
+      <div class="split-foot">
+        <div>compared<b id="n-cmp">0</b></div>
+        <div>differed<b id="n-diff">0</b></div>
+        <div>diff rate<b id="n-rate">0.0%</b></div>
+        <div class="verdict pass" id="verdict">gate: PASS</div>
+      </div>
+    </div>
+    
+  </div>
+</header>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="tag">how it works</span>
+      <h2>Same input, two builds, one comparison per event</h2>
+    </div>
+    <p>A run is a pipeline with a fork in the middle. Everything before the fork happens once. Everything after it happens twice, once per side, and the two halves never see each other until the diff.</p>
+    <div class="pipe">
+      <div class="stage"><div class="n">Sample</div><div class="d">Take N events off the production topic. Each one keeps its (topic, partition, offset) as its identity.</div></div>
+      <div class="stage"><div class="n">Replay</div><div class="d">Republish the sample onto two per-run replay topics, one per side, with the event id in a header.</div></div>
+      <div class="stage dual"><div class="n">Execute</div><div class="d">Both builds consume their own replay topic.</div><div class="sides"><span class="b">baseline · today's image</span><span class="c">candidate · the new image</span></div></div>
+      <div class="stage dual"><div class="n">Capture</div><div class="d">Kafka outputs and HTTP calls are recorded, tagged with the event that caused them.</div><div class="sides"><span class="b">baseline effects</span><span class="c">candidate effects</span></div></div>
+      <div class="stage"><div class="n">Diff</div><div class="d">Effects are re-keyed by event id onto one topic, so a pool of workers can compare in parallel.</div></div>
+      <div class="stage"><div class="n">Verdict</div><div class="d">A policy turns diff rate, error rate and p95 latency into PASS or FAIL, and a CI exit code.</div></div>
+    </div>
+    <p>The comparison is only meaningful if a few things hold:</p>
+    <ul class="rules">
+      <li><b>correlation</b>Every side effect carries the id of the event that caused it. The SDK puts it there, so a service can't forget. Without this there is nothing to compare.</li>
+      <li><b>determinism</b>The shadow consumers read only their per-run replay topics, never production, so a run is reproducible from its archived sample.</li>
+      <li><b>isolation</b>The candidate is untrusted code. It runs in its own namespace with no way out except to the shadow broker. <a href="#isolation">Proven below.</a></li>
+      <li><b>idempotency</b>Diffs are keyed so that re-processing an event after a crash writes the same row, not a second one. Retries are safe by construction.</li>
+      <li><b>behavior, not implementation</b>Only what a service does to the outside world is compared. Internal state and logs are its own business.</li>
+      <li><b>completion</b>A run is done when every consumer group's lag is zero, not when a timer runs out.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="isolation">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="tag">isolation</span>
+      <h2>The candidate can't reach anything it shouldn't</h2>
+    </div>
+    <div class="two">
+      <div>
+        <p>The build under test might be broken, or might be malicious, and EventShield has to be safe to run either way. Each run gets a fresh Kubernetes namespace with a default-deny egress policy, a service account with no API token, and an allowlist with exactly one entry: the shadow broker, on its port.</p>
+        <p>I wanted a test that would fail if it weren't true, so a probe pod runs inside the sandbox and tries to get out. It has to be blocked from the internet by raw IP as well as by hostname, because a hostname-only test can't tell "egress blocked" from "DNS blocked". And it has to <em>succeed</em> at reaching the shadow broker, because a pod with no network at all would pass every other check for the wrong reason.</p>
+        
+      </div>
+      <div class="probe" aria-label="Isolation probe output">
+<span class="cmt"># deploy/aws/verify-isolation-eks.sh · probe pod inside a run namespace on EKS</span>
+<span class="k">internet, raw IP    </span> <span class="no">BLOCKED</span>   nc 1.1.1.1 80
+<span class="k">internet, by name   </span> <span class="no">BLOCKED</span>   wget example.com
+<span class="k">instance metadata   </span> <span class="no">BLOCKED</span>   169.254.169.254 · no borrowed node credentials
+<span class="k">kubernetes API      </span> <span class="no">BLOCKED</span>   no token, no route
+<span class="k">RDS postgres        </span> <span class="no">BLOCKED</span>   the control plane's database
+<span class="k">shadow MSK broker   </span> <span class="yes">REACHABLE</span> :9098 · positive control
+<span class="cmt">6/6 · asserted only after the first deny appeared, a few seconds past Ready</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="numbers">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="tag">numbers</span>
+      <h2>Measured on AWS</h2>
+    </div>
+    <p class="fine">Cluster: EKS 1.35 on 3× c5.2xlarge, MSK 2× kafka.m7g.large over SASL/IAM, RDS, ElastiCache, ClickHouse in-cluster, 24 diff workers.</p>
+    <div class="ledger-wrap">
+    <table class="ledger">
+      <thead><tr><th>what</th><th>measured</th><th>target</th><th>how it was measured</th></tr></thead>
+      <tbody>
+        <tr><td>Largest run</td><td class="num">1,000,000 events</td><td>≥ 1M</td><td class="how">Two runs, 25.4 s and 25.3 s end to end, submitted through the API.</td></tr>
+        <tr><td>Detection</td><td class="num">10,000 / 10,000</td><td>1.0 / 1.0</td><td class="how">The planted regression touches exactly 1% of events. Every one was caught, nothing else was. Also exact at 5k, 20k and 100k.</td></tr>
+        <tr><td>Replay</td><td class="num">79k events/s</td><td>≥ 25k</td><td class="how">Counter delta over the whole wall clock, both sides. Conservative: the window includes seeding and sampling.</td></tr>
+        <tr><td>Comparison, while active</td><td class="num c">~130–150k /s</td><td>≥ 50k</td><td class="how">1-second samples of the comparisons counter during the 1M runs. The stage itself ran for about 7 of the 25 seconds.</td></tr>
+        <tr><td>Comparison, whole-run average</td><td class="num">39.4k /s</td><td>≥ 50k</td><td class="how">Same counter divided by the entire wall clock, ~14 s of which is generating and sampling 2M synthetic input records. Below target by this reading; I quote it anyway.</td></tr>
+        <tr><td>Isolation</td><td class="num">6 / 6</td><td>all</td><td class="how">The probe above, on EKS, with a positive control.</td></tr>
+        <tr><td>Cost to build and prove</td><td class="num">≈ $5</td><td>—</td><td class="how">Whole AWS phase, including every benchmark. The environment bills ~$0.86/hr so it only exists while measuring.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+
+<section id="built">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="tag">what I built</span>
+      <h2>One Go module, from SDK to Terraform</h2>
+    </div>
+    <div class="stack-list">
+      <div><b>sdk/go</b>The library a service embeds. Pulls the event id out of each record into the handler's context and stamps it onto every Kafka record and HTTP call the handler makes.</div>
+      <div><b>pipeline · comparator</b>Sample, replay, capture, and a per-event diff engine with rules: ignore a field, allow numeric tolerance, treat an array as a set.</div>
+      <div><b>storage · state · meta</b>ClickHouse for diffs (ReplacingMergeTree, so retries are idempotent), Redis for counters and leases, Postgres for the run registry.</div>
+      <div><b>kubernetes</b>The sandbox controller: namespace per run, Calico default-deny, token-less service account, and the probe that proves it.</div>
+      <div><b>api · orchestrator · gate</b>REST API, a poller that leases queued runs and executes them, and the policy that turns metrics into an exit code CI can act on.</div>
+      <div><b>capture-proxy</b>An egress proxy the sandbox routes HTTP through, so outbound calls get recorded and correlated instead of leaving.</div>
+      <div><b>deploy/terraform · helm</b>VPC, EKS, MSK with IAM auth, RDS, ElastiCache, S3, ECR, least-privilege IRSA roles. One command up, one command down, a budget alarm in between.</div>
+      <div><b>dashboard</b>A Next.js console over the API: latency, error rate, and the diffs, per run.</div>
+    </div>
+  </div>
+</section>
+
+
+<script>
+(function () {
+  // ---------- the split: a small honest simulation of the demo service ----------
+  const feedB = document.getElementById('feed-b');
+  const feedC = document.getElementById('feed-c');
+  const plant = document.getElementById('plant');
+  const pauseBtn = document.getElementById('pause');
+  const nCmp = document.getElementById('n-cmp');
+  const nDiff = document.getElementById('n-diff');
+  const nRate = document.getElementById('n-rate');
+  const verdict = document.getElementById('verdict');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const MAX_ROWS = 7;
+  let offset = 41180, compared = 0, diffs = 0, paused = false, timer = null;
+
+  const fmt = n => n.toLocaleString('en-US');
+  const money = n => '$' + n.toFixed(2);
+
+  function process(order, candidate) {
+    let total = order.unitPrice * order.qty;
+    if (candidate && plant.checked && order.country === 'DE') total *= 1.19; // the planted bug
+    return total;
+  }
+  function row(feed, id, order, total, differs) {
+    const el = document.createElement('div');
+    el.className = 'row' + (order.country === 'DE' ? ' de' : '') + (differs ? ' diff' : '');
+    el.innerHTML = '<span class="id">' + id + '</span><span>' + order.qty + '× ' + money(order.unitPrice) + '</span><span class="out">' + money(total) + '</span>';
+    feed.prepend(el);
+    while (feed.children.length > MAX_ROWS) feed.lastChild.remove();
+  }
+  function tick() {
+    offset++;
+    // roughly one in twelve orders is from Germany here so the viewer sees a diff quickly;
+    // the real benchmark plants it at exactly 1%.
+    const de = offset % 12 === 0;
+    const order = { qty: 1 + (offset * 7) % 4, unitPrice: [12.5, 19.99, 40, 8.25, 64][offset % 5], country: de ? 'DE' : ['US', 'FR', 'GB', 'NL'][offset % 4] };
+    const id = 'order.created:' + (offset % 12) + ':' + offset;
+    const b = process(order, false), c = process(order, true);
+    const differs = Math.abs(b - c) > 1e-9;
+    row(feedB, id, order, b, false);
+    row(feedC, id, order, c, differs);
+    compared++; if (differs) diffs++;
+    nCmp.textContent = fmt(compared); nDiff.textContent = fmt(diffs);
+    nRate.textContent = (compared ? (100 * diffs / compared) : 0).toFixed(1) + '%';
+    const fail = diffs > 0;
+    verdict.textContent = 'gate: ' + (fail ? 'FAIL' : 'PASS');
+    verdict.className = 'verdict ' + (fail ? 'fail' : 'pass');
+  }
+  function reset() {
+    feedB.innerHTML = ''; feedC.innerHTML = ''; compared = 0; diffs = 0;
+    for (let i = 0; i < MAX_ROWS; i++) tick();
+  }
+  function start() { if (timer) clearInterval(timer); timer = setInterval(tick, 520); }
+  plant.addEventListener('change', reset);
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'resume' : 'pause';
+    pauseBtn.setAttribute('aria-pressed', String(paused));
+    if (paused) clearInterval(timer); else start();
+  });
+  reset();
+  if (reduced) { paused = true; pauseBtn.textContent = 'resume'; pauseBtn.setAttribute('aria-pressed', 'true'); }
+  else start();
+
+  // ---------- the chart: two measured phase traces on one axis ----------
+  // Before: the pre-fix 100k run on AWS (comparisons counter, offset removed). 2026-09-13.
+  const pre = [[0,0],[10,462],[40,8387],[50,8387],[121,24912],[131,24912],[141,24912],[202,39602],[293,79534],[300,80000]].map(([t,c]) => [t, c/80000]);
+  const preStalls = [[40,50],[121,141]];
+  // After: the post-fix 1M run on AWS, 1-second samples. 2026-09-14.
+  const post = [[0,0],[6.6,0],[14.3,19828],[15.4,313436],[16.5,468765],[17.6,590867],[18.7,753138],[19.8,904296],[20.9,1000000],[22.0,1000000],[25.4,1000000]].map(([t,c]) => [t, c/1000000]);
+  const svg = document.getElementById('chart-svg');
+  const readout = document.getElementById('readout');
+  const W = 1000, H = 300, L = 46, R = 16, T = 18, B = 40;
+  let xmax = 300;
+  const X = t => L + (t / xmax) * (W - L - R);
+  const Y = f => T + (1 - f) * (H - T - B);
+  const path = pts => pts.filter(p => p[0] <= xmax + 1e-9).map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join(' ');
+  function draw() {
+    const ticks = xmax > 100 ? [0,50,100,150,200,250,300] : [0,5,10,15,20,25];
+    let s = '';
+    for (const f of [0,0.25,0.5,0.75,1]) s += '<line class="ax" x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(f)+'" y2="'+Y(f)+'"/><text class="lbl" x="'+(L-8)+'" y="'+(Y(f)+4)+'" text-anchor="end">'+Math.round(f*100)+'%</text>';
+    for (const t of ticks) s += '<text class="lbl" x="'+X(t)+'" y="'+(H-14)+'" text-anchor="middle">'+t+' s</text>';
+    s += '<text class="lbl" x="'+(W-R)+'" y="'+(H-2)+'" text-anchor="end">share of the run compared</text>';
+    if (xmax > 100) {
+      s += '<path class="pre" d="'+path(pre)+'"/>';
+      for (const [a,b] of preStalls) s += '<line class="stall" x1="'+X(a)+'" x2="'+X(b)+'" y1="'+Y(pre.find(p=>p[0]===a)[1])+'" y2="'+Y(pre.find(p=>p[0]===a)[1])+'"/>';
+    }
+    s += '<path class="post" d="'+path(post)+'"/>';
+    if (xmax <= 100) s += '<text class="lbl" x="'+X(10)+'" y="'+(Y(0)-8)+'">← orchestrator pickup, seeding 2M records, sampling 1M</text><text class="lbl" x="'+(X(22.5))+'" y="'+(Y(1)+16)+'" text-anchor="start">done at 25.4 s</text>';
+    else s += '<text class="lbl" x="'+X(150)+'" y="'+(Y(0.45))+'">before: 100k events, 293 s</text><text class="lbl" x="'+(X(28))+'" y="'+(Y(0.98))+'" fill="var(--cand)">after: 1M events, 25 s</text>';
+    svg.innerHTML = s;
+  }
+  function setZoom(v, btn) {
+    xmax = v; draw();
+    for (const id of ['zoom-all','zoom-post']) document.getElementById(id).setAttribute('aria-pressed', String(id === btn));
+  }
+  document.getElementById('zoom-all').addEventListener('click', () => setZoom(300, 'zoom-all'));
+  document.getElementById('zoom-post').addEventListener('click', () => setZoom(26, 'zoom-post'));
+  svg.addEventListener('mousemove', e => {
+    const r = svg.getBoundingClientRect();
+    const t = ((e.clientX - r.left) / r.width * W - L) / (W - L - R) * xmax;
+    if (t < 0) return;
+    const at = (pts, n) => { let last = pts[0]; for (const p of pts) { if (p[0] <= t) last = p; else break; } return Math.round(last[1] * n); };
+    let msg = 't = ' + t.toFixed(1) + ' s · after: ' + fmt(at(post, 1000000)) + ' of 1,000,000 compared';
+    if (xmax > 100) msg += ' · before: ' + fmt(at(pre, 100000)) + ' of 100,000';
+    readout.textContent = msg;
+  });
+  svg.addEventListener('mouseleave', () => { readout.textContent = 'hover the chart to read a point'; });
+  draw();
+})();
+</script>
+</body>
+</html>
